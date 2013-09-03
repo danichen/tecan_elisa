@@ -43,7 +43,7 @@ class DilutionSeries
     @sample = sample
     @numRep = @series.length/@series.uniq.length
 
-		$sample_list.push(@sample)
+		#$sample_list.push(@sample)
 
 		@dest_name = Destination.last.pk
 
@@ -127,7 +127,7 @@ class DilutionSeries
 
 			# connect to dwells
 
-			Dwell.where(:gname => @sample, :d1value => a).update(:swell_id => Swell.last.id)
+			Dwell.where(:gname => @sample, :working_d1value => a).update(:swell_id => Swell.last.id)
 			
 
 			@available_vol = (Swell.last.dvolume + Swell.last.svolume) - DefaultVol * @numRep
@@ -233,9 +233,16 @@ class Robot
 
 # Pipet to final plate
 	def final
+
+		@last_src = Array.new
 		
 		filename = @dest_name + ".final.gwl"
 		f = File.open(filename, 'w')
+
+		dispense_buffer = ""
+		aspirate_buffer = ""
+		diti_buffer = ""
+		rep = 1
 
 
 		Dwell.order(:position).where(:destination_id => Destination.last.pk).each_slice(8) do |x|
@@ -244,10 +251,11 @@ class Robot
 			@src = Array.new
 			@tgt = Array.new
 
-			puts "=============================!"
+			puts "\n=============================!"
 			x.each_with_index do |y, i|
 				
-				if (y.d1value > 0)
+				
+				if (y.d1value > 0) # y.working.d1value
 					@tips.push(i+1)
 					@tgt.push(y.position)
 					@src.push(Swell.where(:id => y.swell_id).last.position)
@@ -256,51 +264,110 @@ class Robot
 			end
 
 			p(@tips)
-			p(@tgt)
 			p(@src)
-
-
-
-			# Begin Worklist Generation
+			puts"===>"
+			p(@tgt)
 
 			@target_pvol = Array.new(12,0) # standard sample pipet volume
+
+
 			
-			if (@tips.count > 0)
+			if @src == @last_src # if just a replicate:
+
+				puts "duplicate!"
+				rep += 1; p(rep)
+				liqCls = "Water free dispense for testing"
+				@loop = ',0,0);'
+
 				@tips.each do |z|
 					@target_pvol[z-1] = (DefaultVol - 10)
 				end
-				
-				f.puts("#{AdvWL.pickup(@tips)}\r\n")
 
-				#===========================Need consistent class method; can use all arrays other than initiate method (consider pulling that out of Command Writer)
-
-
-				# Aspirate Well
-				grid = ',23,2,1,'
-				@loop = ',0,0);'
-				liqCls = "Water free dispense for testing"
-
-				f.puts ('B;Aspirate(' << (Tecan.tipmask(@tips)).to_s << ',"' << liqCls << '",'<< @target_pvol.join(',') << grid << (Tecan.wellmask(@src, [12,8])).to_s << @loop << "\r\n")
-
-
-
-# Dispense
+				# Dispense
 				grid = ',23,1,1,'
+				dispense_buffer = dispense_buffer << ('B;Dispense(' << (Tecan.tipmask(@tips)).to_s << ',"' << liqCls << '",'<< @target_pvol.join(',') << grid << (Tecan.wellmask(@tgt, [12,8])).to_s << @loop << "\r\n") if @tgt.length > 0
 
-				f.puts ('B;Dispense(' << (Tecan.tipmask(@tips)).to_s << ',"' << liqCls << '",'<< @target_pvol.join(',') << grid << (Tecan.wellmask(@tgt, [12,8])).to_s << @loop << "\r\n")
+				# Aspirate
+				grid = ',23,2,1,'
 
-
-
-				#===========================
-
-
-				f.puts("#{AdvWL.drop}\r\n")
+				@tips.each do |z|
+					@target_pvol[z-1] = (DefaultVol * rep)
+				end
 			
 
-			end
+				aspirate_buffer = ('B;Aspirate(' << (Tecan.tipmask(@tips)).to_s << ',"' << liqCls << '",'<< @target_pvol.join(',') << grid << (Tecan.wellmask(@src, [12,8])).to_s << @loop << "\r\n")
 
+				
+
+			else # else, current column is not another replicate
+				puts "new replicate set: write previous!"
+
+				
+
+				if dispense_buffer != ""
+					f.print(diti_buffer)
+					f.print(aspirate_buffer)
+					f.print(dispense_buffer)
+					f.puts("#{AdvWL.drop}\r\n")
+				end
+
+				rep = 1 #initialize
+				aspirate_buffer = ""
+				dispense_buffer = ""
+				diti_buffer = ""
+
+				# Dispense
+
+				@tips.each do |z|
+					@target_pvol[z-1] = (DefaultVol - 10)
+				end
+
+
+				liqCls = "Water free dispense for testing"
+				@loop = ',0,0);'
+				grid = ',23,1,1,'
+
+				
+				dispense_buffer = dispense_buffer << ('B;Dispense(' << (Tecan.tipmask(@tips)).to_s << ',"' << liqCls << '",'<< @target_pvol.join(',') << grid << (Tecan.wellmask(@tgt, [12,8])).to_s << @loop << "\r\n") if @tgt.length > 0
+
+				# Aspirate
+				grid = ',23,2,1,'
+
+				@tips.each do |z|
+					@target_pvol[z-1] = (DefaultVol * rep)
+				end
+			
+
+				aspirate_buffer = ('B;Aspirate(' << (Tecan.tipmask(@tips)).to_s << ',"' << liqCls << '",'<< @target_pvol.join(',') << grid << (Tecan.wellmask(@src, [12,8])).to_s << @loop << "\r\n")
+
+				# Diti
+
+				diti_buffer = ("#{AdvWL.pickup(@tips)}\r\n")
+
+
+				p(@src)
+				p(@last_src)
+				@last_src = Array.new(@src)
+					
+				#===========================Need consistent class method; can use all arrays other than initiate method (consider pulling that out of Command Writer)
+			end
+			
 		end
+
+		###### Print last buffered column...NOT DRY BIG TIME...:(
+
+		if dispense_buffer != ""
+			f.print(diti_buffer)
+			f.print(aspirate_buffer)
+			f.print(dispense_buffer)
+			f.puts("#{AdvWL.drop}\r\n")
+		end
+
+	f.close
+
 	end
+
+
 
 end
 
@@ -368,9 +435,8 @@ class AdvWL
   def asps
 		grid = ',15,0,1,'
 		liqCls = "Water free dispense for testing"
-
 					
-		return ('B;Aspirate(' << (Tecan.tipmask(@tip_list)).to_s << ',"' << liqCls << '",'<< @target_svol.join(',') << grid << (Tecan.wellmask([$sample_list.index(@record.last.sample)+1], [1,16])).to_s << @@loop)
+		return ('B;Aspirate(' << (Tecan.tipmask(@tip_list)).to_s << ',"' << liqCls << '",'<< @target_svol.join(',') << grid << (Tecan.wellmask([$sample_list.compact.uniq.index(@record.last.sample)+1], [1,16])).to_s << @@loop)
 	end
 
 
@@ -460,6 +526,7 @@ DB.create_table? :dwells do
   String :sname
   String :d1name
   Float :d1value
+	Float :working_d1value #holds working dilution factors 
   String :d1unit
   Integer :position
   Integer :volume
@@ -502,7 +569,7 @@ Destination.create do |a| # spawn a new destination plate
   a.rundate = Date.today.to_s
 end
 
-manifest = Array.new # sample manifest
+#manifest = Array.new # sample manifest
 
 header = Hash.new # process file header
 
@@ -522,18 +589,19 @@ while line = infile.gets # read into database
       a.sname = line[header[:sample_name]]
       a.d1name = line[header[:descriptor1_name]]
       a.d1value = line[header[:descriptor1_value]]
+			#a.working_d1value = line[header[:descriptor1_value]]
       a.d1unit = line[header[:descriptor1_units]]
       map = lambda{|x| x[0].ord-64+(x[1..-1].to_i-1)*8 }
       a.position = map.call(a.wlocation)
       a.volume = DefaultVol
       a.destination_id = Destination.last.pk
     end
-    manifest.push(line[header[:group_name]]) # add sample to manifest
+    #manifest.push(line[header[:group_name]]) # add sample to manifest
 #################### ADDING BACK EMPTY WELLS
 	else
 		Dwell.create do |a|
 			a.wlocation = line[header[:﻿well_location]] # weird encoding problem
-      a.gname = '0'
+      a.gname = nil
       a.gtype = '0'
       a.sname = '0'
       a.d1name = '0'
@@ -552,19 +620,39 @@ infile.close
 
 
 # test area
-Dwell.where(:gname => 'sample3').each do |a|
-  p(a)
-  p(Destination.where(:id => a.destination_id).first)
+#Dwell.where(:gname => 'sample3').each do |a|
+# p(a)
+# p(Destination.where(:id => a.destination_id).first)
+#end
+
+# make dilution series, Swell ordered by Dwell position to optimize S->D transfer
+
+Dwell.order(:position).where(:destination_id => Destination.last.pk).each do |a|
+	$sample_list.push(a.gname)
 end
+	
+#p($sample_list.compact.uniq)
 
-# make dilution series
-
-manifest.uniq.each_with_index do |a, i|
-
+$sample_list.compact.uniq.each do |a|
 	
   series = Array.new
+	conc = 0
+
+	# Get stock concentration from user
+	if (p(Dwell.where(:gname => a).last.d1name) == 'Concentration')
+		puts "Enter stock concentration for #{a} (ng/mL):"
+		conc = STDIN.gets.chomp.to_f
+	end
+
+	# Pass series value to DilutionSeries class; convert conc to df if necessary
   Dwell.where(:gname => a).each do |b|
-    series.push(b.d1value)
+		if conc > 0
+			b.working_d1value = conc/b.d1value
+		else
+			b.working_d1value = b.d1value
+		end
+		Dwell.where(:id => b.id).update(:working_d1value => b.working_d1value)
+    series.push(b.working_d1value)
   end
   dilutionSeries = DilutionSeries.new(series, a)
 end
@@ -574,8 +662,10 @@ end
 dilution_script = Robot.new
 dilution_script.dilution
 
+
+# output sample location assignment
 puts "Sample\tPosition"
-$sample_list.each_with_index do |x, i|
+$sample_list.compact.uniq.each_with_index do |x, i|
 	puts "#{x}\t#{i+1}"
 end
 

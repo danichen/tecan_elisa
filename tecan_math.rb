@@ -1,7 +1,7 @@
 module Tecan
 
-	def tipmask (arg) # takes an array of tips
-		@tip_ar = arg
+	def Tecan.tipmask (aryOfTips) # takes an array of tips
+		@tip_ar = aryOfTips
 		x = 0
 		@tip_ar.each do |a|
 			x += 2**(a - 1)
@@ -9,13 +9,13 @@ module Tecan
 		return (x)
 	end
 
-	def wellmask (arg1, arg2) # takes an array of well positions and labware type
-		@well_ar = arg1
-		@labware_ar = arg2
-		@numWells = @labware_ar[0] * @labware_ar[1]
+	def Tecan.wellmask (aryOfWells, labwareWH) # takes an array of well positions and labware type
+		@well_ar = aryOfWells
+		@labwareWH = labwareWH
+		@numWells = @labwareWH[0] * @labwareWH[1]
 
 		# first 4 chr
-		x = "%02X%02X" % [12,8]
+		x = "%02X%02X" % [@labwareWH[0],@labwareWH[1]]
 
 		# the rest of the string
 		
@@ -29,10 +29,9 @@ module Tecan
 		end
 		return (x)
 	end
-
 end
 
 
-#include Tecan
-#x = [1, 5]
-#p(Tecan::wellmask(x, [12,8]))
+include Tecan
+x = [1,2,3,4,5,6,7]
+p(Tecan::wellmask(x, [12,8]))
